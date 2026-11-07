@@ -20,13 +20,13 @@ the network or device is unavailable.
 
 ## Status
 
-- Local development repository; not published to GitHub. Files were installed
-  into HA for controlled runtime testing on 2026-11-07; setup status is tracked
-  in the main setup notes.
-- Pure policy tests run locally; HA runtime/loading tests still required.
-- Before publication, add verified repository documentation URL/codeowners to
-  the manifest, English translations, and run HACS/hassfest validation. Current
-  metadata is a development draft, not a validated HACS release.
+- Published as an experimental custom integration.
+- Five pure policy tests pass. Config flows and button entities loaded in a
+  Home Assistant 2026.10.4 installation; Stop actions were accepted.
+- Physical movement, concurrency/failure behaviour and migration remain to be
+  tested. HACS/hassfest validation and release packaging remain pending.
+- Repository documentation, codeowner metadata and English translations are
+  included. This is not a validated HACS release yet.
 - Top lens: blocked pending verified native command/channel and legitimate
   camera authentication. No credential guessing, firmware flashing, or lock bypass.
 - Outside: not supported by this ONVIF-only integration.
