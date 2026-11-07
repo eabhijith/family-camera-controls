@@ -59,6 +59,46 @@ No feature requires a script running on the Mac.
 python3 -m unittest discover -s tests -v
 ```
 
+## Optional dual-view dashboard card
+
+Copy the two files from `www/` into HA's `www/family-camera-controls/` directory,
+then register `/local/family-camera-controls/dual-lens-card.js` as a JavaScript
+module dashboard resource. No camera password is stored in the card. It uses
+Home Assistant authenticated snapshots, not publicly accessible camera URLs.
+
+```yaml
+type: custom:family-dual-lens-card
+entity: camera.example
+name: Camera views
+split_fraction: 0.5
+buttons:
+  up: button.example_bottom_lens_up
+  down: button.example_bottom_lens_down
+  left: button.example_bottom_lens_left
+  right: button.example_bottom_lens_right
+  stop: button.example_bottom_lens_stop
+```
+
+The Both/Upper/Lower selector crops a vertically stacked composite image for
+display. This does not separate the camera's native video sources or move the
+upper lens. `split_fraction` can be calibrated to the actual image boundary.
+Snapshots refresh every 3 seconds, with timeouts and stale-picture warnings;
+this is not a continuous-video player. Keep a standard live-camera view for
+continuous video. Direction buttons are only shown for lower/both views and
+disabled when disconnected. Keyboard focus and large touch targets are included.
+
+Run display-geometry tests with `node --test tests/test_view_geometry.mjs`.
+
+### Electronic view-control research
+
+Static analysis of a user-supplied Cofe Online APK identified a distinct
+`OPElecPTZControl` command (1402), with channel and pixel-offset parameters.
+`electronic_ptz.py` contains an independently written, bounded payload builder.
+It has **no network transport or registered HA service**: authenticated camera
+access and per-device lens mapping have not been verified. Do not advertise it
+as working upper-lens control. No APKs, decompiled code or household captures
+are distributed by this repository.
+
 Do not publish personal device addresses, HA exports, app captures or keys.
 
 Source inspected:
