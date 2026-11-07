@@ -89,6 +89,13 @@ disabled when disconnected. Keyboard focus and large touch targets are included.
 
 Run display-geometry tests with `node --test tests/test_view_geometry.mjs`.
 
+The refined card uses readable 16px labels, 56px+ controls, authored SVG icons,
+clear selected/focus states and a manual refresh button. Simulated browser
+previews were checked at 390px and 1280px widths and in light/dark modes, with
+no horizontal overflow. These previews do not contain household imagery.
+Impeccable and UI/UX Pro Max guidance informed the refinement; no successful
+automated Impeccable audit is claimed (its context launcher timed out).
+
 ### Electronic view-control research
 
 Static analysis of a user-supplied Cofe Online APK identified a distinct
