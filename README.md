@@ -21,7 +21,10 @@ the network or device is unavailable.
 ## Status
 
 - Published as an experimental custom integration.
-- Five pure policy tests pass. Config flows and button entities loaded in a
+- Ten policy/wrapper tests pass. Wrapper tests use stubbed HA interfaces and
+  cover failed moves triggering Stop, overlap rejection, Stop during a move,
+  and unavailable-camera rejection. These are not full HA runtime tests.
+  Config flows and button entities loaded in a
   Home Assistant 2026.10.4 installation; Stop actions were accepted.
 - Physical movement, concurrency/failure behaviour and migration remain to be
   tested. HACS/hassfest validation and release packaging remain pending.
