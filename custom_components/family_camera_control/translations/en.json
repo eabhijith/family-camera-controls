@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bottom-lens controls",
+        "description": "Select an existing ONVIF camera. Independent top-lens control is not supported yet.",
+        "data": {"camera_entity": "Camera", "room": "Room name"}
+      }
+    },
+    "error": {"not_onvif": "Select a camera from the ONVIF integration."},
+    "abort": {"already_configured": "Controls for this camera already exist."}
+  }
+}

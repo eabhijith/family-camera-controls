@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+.env
+*.key
+secrets.yaml
+.DS_Store
+# Never publish household exports, recordings, captures, or credentials.
+secrets.*
+credentials.*
+*.pem
+*.p12
+*.pfx
+*.apk
+*.xapk
+*.pcap
+*.pcapng
+*.har
+*.mp4
+*.mkv
+*.tar
+*.tar.gz
+snapshots/
+evidence/
+backups/

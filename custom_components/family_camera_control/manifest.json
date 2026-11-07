@@ -1,0 +1,13 @@
+{
+  "domain": "family_camera_control",
+  "name": "Family Camera Controls",
+  "codeowners": ["@eabhijith"],
+  "config_flow": true,
+  "dependencies": ["onvif"],
+  "documentation": "https://github.com/eabhijith/family-camera-controls",
+  "integration_type": "helper",
+  "iot_class": "assumed_state",
+  "issue_tracker": "https://github.com/eabhijith/family-camera-controls/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
