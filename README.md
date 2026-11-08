@@ -53,6 +53,30 @@ Existing ONVIF integration owns credentials. HA full backups include this
 custom_components directory, config entries and associated dashboards.
 No feature requires a script running on the Mac.
 
+## Optional local Hikvision DVR status
+
+`custom_components/hikvision_dvr_status` is a separate, read-only HA integration.
+Copy that directory into HA's `custom_components/`, restart, and add **Family
+Hikvision DVR Status** in Devices & services. Enter local DVR credentials in HA;
+Hik-Connect cloud credentials are not interchangeable. Credentials are stored in
+HA's config entry and sensitive full backups, never in the dashboard or repository.
+
+Implemented entities:
+
+- Camera count from explicit video-input IDs (main/substreams are deduplicated).
+- Storage status reported by the DVR, refreshed every minute.
+
+Unsupported fields/endpoints are unavailable, not assumed healthy. There are no
+PUT/POST operations, firmware updates, recording initialization or configuration
+writes. TLS certificate verification remains enabled; redirects are rejected.
+
+Live read-only probes reached ISAPI device information, streaming channels and
+storage endpoints but received Digest authentication challenges. Authenticated
+responses and this new integration's HA runtime have **not** been tested yet.
+Parser/client unit tests use synthetic XML fixtures. This uses the standard local
+ISAPI route, not recovered native SDK packet framing. Existing recordings,
+intelligent-alert settings and lighting controls are not exposed by this component.
+
 ## Development
 
 ```sh

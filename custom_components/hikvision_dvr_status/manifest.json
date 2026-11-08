@@ -1,0 +1,11 @@
+{
+  "domain": "hikvision_dvr_status",
+  "name": "Family Hikvision DVR Status",
+  "codeowners": ["@eabhijith"],
+  "config_flow": true,
+  "documentation": "https://github.com/eabhijith/family-camera-controls",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}

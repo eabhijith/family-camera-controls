@@ -1,0 +1,18 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Local Hikvision DVR",
+        "description": "Read-only camera count and disk status. Use the DVR's local credentials, not your Hik-Connect account. No recording, alert or lighting settings are changed. HTTP Digest does not encrypt video or status traffic; use HTTPS with a trusted certificate when available.",
+        "data": {"host": "DVR host", "username": "Local DVR username", "password": "Local DVR password", "port": "Port", "use_https": "Use HTTPS"}
+      },
+      "reauth_confirm": {
+        "title": "Update local DVR credentials",
+        "description": "The DVR rejected its saved local credentials. Enter the current local credentials; do not use Hik-Connect cloud credentials.",
+        "data": {"username": "Local DVR username", "password": "Local DVR password"}
+      }
+    },
+    "error": {"invalid_auth": "The DVR rejected these local credentials.", "cannot_connect": "Could not read this DVR's ISAPI device information.", "wrong_device": "This address returned a different DVR identity. Credentials were not updated."},
+    "abort": {"already_configured": "This DVR is already configured.", "reauth_successful": "Local DVR credentials updated."}
+  }
+}
