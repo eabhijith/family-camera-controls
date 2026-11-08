@@ -149,6 +149,26 @@ Envelope/session fields, network framing, authentication and per-device lens
 mapping remain unverified. No HA action exposes this research payload yet.
 No third-party APKs or decompiled source are included.
 
+### Cofe lighting and intelligent-alert settings
+
+`cofe_settings.py` implements independently written read/modify/write envelopes
+for `Camera.WhiteLight` and `Alarm.IntellAlertAlarm`, preserving unknown fields,
+brightness, schedules, event handlers and remote settings. Verified settings:
+
+- WorkMode: `Auto`, `KeepOpen`, `Close`, `Timing`, `Intelligent`.
+- Light-trigger sensitivity: low/middle/high maps to `Level` 2/4/6.
+- M8.u light duration choices: 5/10/30/60/90/120 seconds.
+- Intelligent alerts: boolean Enable and 5/10/15/20-second Duration.
+
+The other app delegate, M8.g, uses seekbar progress +10 for light duration; its
+maximum and the camera's actual delegate/capabilities are not verified. Do not
+treat the M8.u choices as universal device bounds. The night-vision picker is a
+different `Camera.Param.DayNightColor` setting, not WorkMode.
+
+This module is **offline serialization, not an active HA settings service**.
+An authenticated native transport and correlated response/reread are still
+required. Cloud notification subscription is separate from camera alert Enable.
+
 Do not publish personal device addresses, HA exports, app captures or keys.
 
 Source inspected:
