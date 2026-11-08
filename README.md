@@ -99,12 +99,18 @@ automated Impeccable audit is claimed (its context launcher timed out).
 ### Electronic view-control research
 
 Static analysis of a user-supplied Cofe Online APK identified a distinct
-`OPElecPTZControl` command (1402), with channel and pixel-offset parameters.
+`OPElecPTZControl` SDK command argument (1402), with channel and pixel-offset parameters.
+Its exact wire mapping and lens routing are not established.
 `electronic_ptz.py` contains an independently written, bounded payload builder.
 It has **no network transport or registered HA service**: authenticated camera
 access and per-device lens mapping have not been verified. Do not advertise it
 as working upper-lens control. No APKs, decompiled code or household captures
 are distributed by this repository.
+
+Payload bounds/defaults are local safety policies. Validating hexadecimal session
+syntax does not authenticate the camera; validating a channel number does not
+prove that it selects an upper lens. Mechanical split-view channel selection
+must not be transplanted into electronic control without runtime evidence.
 
 Do not publish personal device addresses, HA exports, app captures or keys.
 
