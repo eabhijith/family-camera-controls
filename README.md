@@ -112,6 +112,19 @@ syntax does not authenticate the camera; validating a channel number does not
 prove that it selects an upper lens. Mechanical split-view channel selection
 must not be transplanted into electronic control without runtime evidence.
 
+### EseeCloud multi-PTZ serializer research
+
+Static inspection of the installed EseeCloud app resolved the inherited
+`BaseSettingSession.setNetAPIMultiPtzControl` serializer. `netapi_ptz.py` implements
+its observed `IPCam -> NetAPI -> "R/MultiPTZ/Control"` subtree and fields
+`Chn`, `Cmd`, `Arg: 1`, `Arg2: 0`. The slash-containing string is one JSON key,
+not an endpoint. Only step/stop commands are permitted by the local safety policy.
+
+This is **not a complete wire request or working EseeCloud integration**.
+Envelope/session fields, network framing, authentication and per-device lens
+mapping remain unverified. No HA action exposes this research payload yet.
+No third-party APKs or decompiled source are included.
+
 Do not publish personal device addresses, HA exports, app captures or keys.
 
 Source inspected:
