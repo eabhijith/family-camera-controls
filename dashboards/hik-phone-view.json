@@ -1,0 +1,89 @@
+{
+  "title": "DVR phone view",
+  "path": "dvr-phone-view",
+  "type": "sections",
+  "max_columns": 1,
+  "subview": true,
+  "back_path": "/home-controls/cameras",
+  "header": {
+    "layout": "start",
+    "card": {"type": "markdown", "text_only": true, "content": "# DVR · Live and recordings"}
+  },
+  "sections": [{
+    "type": "grid",
+    "cards": [
+      {
+        "type": "markdown",
+        "content": "One selected camera, connected through the phone. Keep the USB phone unlocked in Hik-Connect. These are refreshed pictures, not continuous video."
+      },
+      {
+        "type": "picture-entity",
+        "entity": "camera.hik_connect_selected_phone_view",
+        "name": "Selected DVR camera",
+        "show_state": true,
+        "camera_view": "auto",
+        "aspect_ratio": "16:9",
+        "tap_action": {"action": "more-info"},
+        "hold_action": {"action": "none"},
+        "grid_options": {"columns": 12, "rows": 4}
+      },
+      {
+        "type": "markdown",
+        "content": "**Camera:** {{ state_attr('camera.hik_connect_selected_phone_view', 'camera_label') or 'Waiting for phone' }}\n\n**View:** {{ state_attr('camera.hik_connect_selected_phone_view', 'mode') or 'Unavailable' }}\n\n**Recording date:** {{ state_attr('camera.hik_connect_selected_phone_view', 'date') or '—' }} · {{ state_attr('camera.hik_connect_selected_phone_view', 'time') or '—' }}"
+      },
+      {
+        "type": "button",
+        "entity": "button.hik_connect_live",
+        "name": "Live now",
+        "icon": "mdi:cctv",
+        "icon_height": "56px",
+        "show_state": false,
+        "tap_action": {"action": "perform-action", "perform_action": "button.press", "target": {"entity_id": "button.hik_connect_live"}},
+        "hold_action": {"action": "none"},
+        "grid_options": {"columns": 6, "rows": 2}
+      },
+      {
+        "type": "button",
+        "entity": "button.hik_connect_recordings",
+        "name": "Recordings",
+        "icon": "mdi:play-box-outline",
+        "icon_height": "56px",
+        "show_state": false,
+        "tap_action": {"action": "perform-action", "perform_action": "button.press", "target": {"entity_id": "button.hik_connect_recordings"}},
+        "hold_action": {"action": "none"},
+        "grid_options": {"columns": 6, "rows": 2}
+      },
+      {
+        "type": "button",
+        "entity": "button.hik_connect_previous_day",
+        "name": "Previous day",
+        "icon": "mdi:calendar-arrow-left",
+        "icon_height": "56px",
+        "show_state": false,
+        "tap_action": {"action": "perform-action", "perform_action": "button.press", "target": {"entity_id": "button.hik_connect_previous_day"}},
+        "hold_action": {"action": "none"},
+        "grid_options": {"columns": 6, "rows": 2}
+      },
+      {
+        "type": "button",
+        "entity": "button.hik_connect_next_day",
+        "name": "Next day",
+        "icon": "mdi:calendar-arrow-right",
+        "icon_height": "56px",
+        "show_state": false,
+        "tap_action": {"action": "perform-action", "perform_action": "button.press", "target": {"entity_id": "button.hik_connect_next_day"}},
+        "hold_action": {"action": "none"},
+        "grid_options": {"columns": 6, "rows": 2}
+      },
+      {
+        "type": "button",
+        "name": "Back to cameras",
+        "icon": "mdi:arrow-left",
+        "icon_height": "56px",
+        "tap_action": {"action": "navigate", "navigation_path": "/home-controls/cameras"},
+        "hold_action": {"action": "none"},
+        "grid_options": {"columns": 12, "rows": 2}
+      }
+    ]
+  }]
+}

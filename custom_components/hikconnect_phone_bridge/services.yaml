@@ -1,0 +1,13 @@
+action:
+  name: Request phone view action
+  description: Wait for verified action on the externally connected, unlocked phone. Controls only the selected app view.
+  fields:
+    action:
+      required: true
+      selector:
+        select:
+          options:
+            - live
+            - recordings
+            - previous_day
+            - next_day

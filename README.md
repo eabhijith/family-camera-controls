@@ -77,7 +77,52 @@ Parser/client unit tests use synthetic XML fixtures. This uses the standard loca
 ISAPI route, not recovered native SDK packet framing. Existing recordings,
 intelligent-alert settings and lighting controls are not exposed by this component.
 
+## Optional Hik-Connect phone bridge
+
+`hikconnect_phone_bridge` displays authenticated snapshots of the **one camera
+view selected in the original Android app**. Four controls request Live,
+Recordings, Previous day and Next day through the app and wait for a verified
+mode/date acknowledgement. Playback controls do not modify DVR storage/settings.
+
+This is **not native DVR streaming or a four-camera grid**. It requires an
+authorized USB phone, the original signed-in Hik-Connect app kept unlocked on its
+camera page, and a running Mac/UTM helper. It never unlocks or launches the app.
+Pausing playback or hidden throughput text does not prevent mirroring the current
+app frame; known loading/error states and unsafe overlays suppress snapshots.
+
+Install `custom_components/hikconnect_phone_bridge` in HA and add:
+
+```yaml
+hikconnect_phone_bridge: {}
+```
+
+Restart HA. Run `tools/hik_phone_bridge.py --help` for the external helper options.
+The helper requires Python 3.9+ and Pillow (`tools/requirements-phone-bridge.txt`). A private serial JSON file is required;
+never commit it. This helper currently targets UTM guest management, not an
+independent physical HA box. Migration needs a corresponding bridge host.
+
+Frames are cropped to the app's actual video texture and stored privately under
+HA config, **not `www`**. HA's camera proxy supplies authenticated snapshots.
+Stale/disconnected/locked or non-Hik-Connect views become unavailable. Session
+tokens, full-screen captures and APKs are not extracted or published.
+
+The YAML service `hikconnect_phone_bridge.action` accepts `action: live`,
+`recordings`, `previous_day`, or `next_day`. It rejects overlapping/stale requests
+and reports errors if the requested mode/date cannot be verified on the phone.
+Only one controller may run; a private lock and persistent command claims prevent
+duplicate date actions during helper handovers. No screen-unlock automation is used.
+
+`dashboards/hik-phone-view.json` provides a native-card view with Live,
+Recordings and previous/next-day controls. It contains no household identifiers.
+
+Controlled runtime validation on HA 2026.10.4 confirmed all four HA button actions,
+correlated app mode/date changes, and HTTP 200 JPEGs from the authenticated camera
+proxy. These results validate the selected-phone-view bridge, not native DVR
+login/streaming or a recording-search API. The All Cameras grid remains unchanged.
+
 ## Development
+
+Phone-helper image tests require Pillow in the test environment.
 
 ```sh
 python3 -m unittest discover -s tests -v

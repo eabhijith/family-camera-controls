@@ -1,0 +1,11 @@
+{
+  "domain": "hikconnect_phone_bridge",
+  "name": "Hik-Connect Phone Bridge",
+  "version": "0.1.0",
+  "documentation": "https://github.com/eabhijith/family-camera-controls",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "dependencies": [],
+  "integration_type": "hub",
+  "codeowners": ["@eabhijith"]
+}
