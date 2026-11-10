@@ -1,0 +1,11 @@
+{
+  "domain": "hikconnect_cloud_relay",
+  "name": "Hik-Connect Cloud Live (experimental)",
+  "codeowners": ["@eabhijith"],
+  "config_flow": true,
+  "dependencies": ["ffmpeg", "stream"],
+  "documentation": "https://github.com/eabhijith/family-camera-controls",
+  "iot_class": "cloud_push",
+  "requirements": ["requests>=2.32.5,<3"],
+  "version": "0.2.0"
+}

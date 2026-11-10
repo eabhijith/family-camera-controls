@@ -77,7 +77,40 @@ Parser/client unit tests use synthetic XML fixtures. This uses the standard loca
 ISAPI route, not recovered native SDK packet framing. Existing recordings,
 intelligent-alert settings and lighting controls are not exposed by this component.
 
-## Optional Hik-Connect phone bridge
+## Phone-free Hik-Connect cloud setup (experimental)
+
+`custom_components/hikconnect_cloud_relay` is a live-only, MIT-derived cloud
+provider. It uses a Hik-Connect **cloud account**, not local DVR credentials, and
+does not require a USB phone or the phone helper. Install the component and add
+**Hik-Connect Cloud Live (experimental)** in Devices & services. Sign in privately
+in HA, choose the actual cloud device and one returned channel.
+
+**This is not yet a verified DVR connection.** Upstream demonstrated an intercom,
+not this DVR. DVR/shared-device/non-EU media compatibility and concurrent channels
+remain unverified. No existing recording playback is implemented.
+
+**Important transport warning:** account/API login uses vendor HTTPS, but this
+candidate's VTM streaming ticket and video use unencrypted TCP. The channel step
+requires explicit risk acceptance, off by default, before creating an entry or
+starting media. Encrypted streams are rejected without repeated logins. Do not
+accept that risk merely to get a picture; a TLS-capable alternative may be needed.
+
+Unlike upstream, the fork registers no unauthenticated custom HA HTTP media
+routes, downloads no RTSP server and does not claim port 8554. Its FFmpeg feed is
+bound to a separate dynamic loopback-only port. HA's native authenticated camera
+and stream endpoints serve viewers. Cached frames expire; starting a connection
+is not treated as proof of a healthy camera. Rejected credentials stop retries.
+
+`www/hik-cloud-grid-card.js` and `dashboards/hik-cloud-view.json` show only camera
+entities actually created by this provider; no cameras are invented before setup.
+The cloud account form and masked password field were validated on HA 2026.10.4.
+No actual cloud credentials were submitted and no DVR cloud stream is claimed.
+
+Source and retained attribution: component `PROVENANCE.md`, `LICENSE`, and
+`THIRD_PARTY_LICENSES/hikconnect-cloud-relay-MIT.txt`. Do not replace this fork
+with an unreviewed upstream update on a publicly reachable HA server.
+
+## Optional legacy Hik-Connect phone bridge
 
 `hikconnect_phone_bridge` displays authenticated snapshots of the **one camera
 view selected in the original Android app**. Four controls request Live,
@@ -122,7 +155,9 @@ login/streaming or a recording-search API. The All Cameras grid remains unchange
 
 ## Development
 
-Phone-helper image tests require Pillow in the test environment.
+Install `tools/requirements-test.txt` in an isolated Python environment for the
+offline suite. No device/account credentials are needed. Cloud test mocks are not
+proof of actual DVR compatibility.
 
 ```sh
 python3 -m unittest discover -s tests -v

@@ -1,0 +1,20 @@
+{
+  "title": "Hik-Connect Cloud Relay",
+  "config": {
+    "step": {
+      "user": {"title": "Hik-Connect cloud account", "description": "Use your cloud account, not the DVR administrator password. Live video only; DVR and non-EU region support are unverified. No continuously connected phone is required. Upstream media transport is unencrypted. No sign-in request is sent until you submit this form.", "data": {"username": "Cloud account", "password": "Cloud password"}},
+      "device": {"title": "Choose cloud device", "data": {"device_serial": "Device"}},
+      "channel": {"title": "Choose one channel", "description": "Experimental: this provider sends its cloud streaming ticket and video over unencrypted TCP. Someone monitoring that network path may observe them. DVR compatibility is unverified. Leave the checkbox off to avoid starting a stream. Account sign-in itself uses HTTPS. Existing recordings are not supported.", "data": {"channel": "Channel", "allow_unencrypted_transport": "I accept the unencrypted cloud transport risk"}},
+      "reauth_confirm": {"title": "Sign in again", "data": {"username": "Cloud account", "password": "Cloud password"}}
+    },
+    "error": {
+      "invalid_auth": "Cloud sign-in was rejected. Verify credentials before retrying to avoid account lockout.",
+      "challenge_required": "The cloud requires interactive CAPTCHA/MFA. This integration cannot complete or bypass that challenge.",
+      "cannot_connect": "Cannot connect securely to the cloud service. Regional support may be unavailable.",
+      "no_devices": "The verified device-list API returned no devices. Shared-device discovery is not verified.",
+      "no_channels": "The cloud returned no accessible channels for this device. DVR support is unverified.",
+      "transport_consent_required": "No stream started. Explicit acceptance is required for this experimental unencrypted transport."
+    },
+    "abort": {"already_configured": "This channel is already configured.", "reauth_successful": "Cloud sign-in updated."}
+  }
+}

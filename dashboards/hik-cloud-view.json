@@ -1,0 +1,14 @@
+{
+  "title": "DVR cloud",
+  "path": "dvr-cloud",
+  "type": "sections",
+  "max_columns": 2,
+  "subview": true,
+  "back_path": "/home-controls/cameras",
+  "header": {"card": {"type": "markdown", "text_only": true, "content": "# DVR · Cloud cameras"}},
+  "sections": [{"type": "grid", "cards": [
+    {"type": "custom:family-hik-cloud-grid", "grid_options": {"columns": 12}},
+    {"type": "markdown", "content": "This experimental provider is live-only. Existing recording playback and this DVR's compatibility are not yet verified. No stream starts without accepting the unencrypted cloud transport warning in setup."},
+    {"type": "button", "name": "Back to cameras", "icon": "mdi:arrow-left", "icon_height": "56px", "tap_action": {"action": "navigate", "navigation_path": "/home-controls/cameras"}, "hold_action": {"action": "none"}, "grid_options": {"columns": 12, "rows": 2}}
+  ]}]
+}

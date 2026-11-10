@@ -1,0 +1,727 @@
+"""Cloud VTM to FFmpeg-backed video outputs for Home Assistant and consumers."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+import logging
+import os
+import queue
+import shutil
+import subprocess
+import threading
+import time
+from typing import BinaryIO
+
+from .cloud import HikConnectClient, HikConnectAuthError
+from .vtm import rtp_payload, rtp_timestamp, UnsupportedVtmStream
+
+_LOGGER = logging.getLogger(__name__)
+_MEDIA_IDLE_TIMEOUT = 10.0
+_INITIAL_MEDIA_TIMEOUT = 20.0
+
+
+def _retry_delay_for_reason(reason: str, backoff: float) -> float:
+    """Retry media-expiry disconnects immediately; back off other failures."""
+
+    return 0.0 if reason == "media_idle" else backoff
+
+
+class H264Depacketizer:
+    """Reassemble RFC 6184 single-NAL, STAP-A and FU-A packets."""
+
+    def __init__(self) -> None:
+        self._fragment = bytearray()
+        self._fragment_active = False
+
+    def feed(self, payload: bytes) -> Iterator[bytes]:
+        if not payload:
+            return
+        nal_type = payload[0] & 0x1F
+        if 1 <= nal_type <= 23:
+            yield payload
+            return
+        if nal_type == 24:
+            position = 1
+            while position + 2 <= len(payload):
+                length = int.from_bytes(payload[position : position + 2], "big")
+                position += 2
+                if not length or position + length > len(payload):
+                    return
+                yield payload[position : position + length]
+                position += length
+            return
+        if nal_type != 28 or len(payload) < 2:
+            return
+        indicator, header = payload[0], payload[1]
+        start, end = bool(header & 0x80), bool(header & 0x40)
+        if start:
+            self._fragment = bytearray(
+                bytes([(indicator & 0xE0) | (header & 0x1F)]) + payload[2:]
+            )
+            self._fragment_active = True
+        elif self._fragment_active:
+            self._fragment.extend(payload[2:])
+        else:
+            return
+        if end and self._fragment_active:
+            result = bytes(self._fragment)
+            self._fragment.clear()
+            self._fragment_active = False
+            yield result
+
+
+class H264ParameterSetInjector:
+    """Make a stream decodable even when a relay joins between keyframes."""
+
+    def __init__(self) -> None:
+        self._sps: bytes | None = None
+        self._pps: bytes | None = None
+        self._sent_parameter_sets = False
+
+    def feed(self, nals: list[bytes]) -> list[bytes]:
+        for nal in nals:
+            if not nal:
+                continue
+            if nal[0] & 0x1F == 7:
+                self._sps = nal
+            elif nal[0] & 0x1F == 8:
+                self._pps = nal
+        if not nals:
+            return []
+        has_parameter_set = any(
+            nal and (nal[0] & 0x1F) in (7, 8) for nal in nals
+        )
+        result: list[bytes] = []
+        has_vcl = False
+        for nal in nals:
+            if not nal:
+                continue
+            if (nal[0] & 0x1F) in (1, 2, 3, 4, 5):
+                has_vcl = True
+                if self._sps is None or self._pps is None:
+                    continue
+                if not self._sent_parameter_sets and not has_parameter_set:
+                    result.extend((self._sps, self._pps))
+                    self._sent_parameter_sets = True
+            result.append(nal)
+        if has_parameter_set and has_vcl and self._sps is not None and self._pps is not None:
+            self._sent_parameter_sets = True
+        return result
+
+
+class FrameBuffer:
+    """Keep the latest frame and provide bounded per-client queues."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._latest: bytes | None = None
+        self._latest_at = 0.0
+        self._clients: set[queue.Queue[bytes]] = set()
+
+    def subscribe(self) -> queue.Queue[bytes]:
+        client: queue.Queue[bytes] = queue.Queue(maxsize=2)
+        with self._lock:
+            self._clients.add(client)
+            if self._latest is not None and time.monotonic() - self._latest_at <= 15:
+                client.put_nowait(self._latest)
+        return client
+
+    def unsubscribe(self, client: queue.Queue[bytes]) -> None:
+        with self._lock:
+            self._clients.discard(client)
+
+    def publish(self, frame: bytes) -> None:
+        with self._lock:
+            self._latest = frame
+            self._latest_at = time.monotonic()
+            clients = tuple(self._clients)
+        for client in clients:
+            try:
+                client.put_nowait(frame)
+            except queue.Full:
+                try:
+                    client.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    client.put_nowait(frame)
+                except queue.Full:
+                    pass
+
+    def snapshot(self, timeout: float = 15.0) -> bytes:
+        client = self.subscribe()
+        try:
+            return client.get(timeout=timeout)
+        finally:
+            self.unsubscribe(client)
+
+    @property
+    def fresh(self) -> bool:
+        with self._lock:
+            return self._latest is not None and time.monotonic() - self._latest_at <= 15
+
+    def clear(self) -> None:
+        with self._lock:
+            self._latest = None
+            self._latest_at = 0.0
+
+
+class ChunkBuffer:
+    """Fan out a live byte stream to bounded per-client queues."""
+
+    def __init__(self, max_chunks: int = 32) -> None:
+        self._max_chunks = max_chunks
+        self._lock = threading.Lock()
+        self._clients: set[queue.Queue[bytes]] = set()
+
+    def subscribe(self) -> queue.Queue[bytes]:
+        client: queue.Queue[bytes] = queue.Queue(maxsize=self._max_chunks)
+        with self._lock:
+            self._clients.add(client)
+        return client
+
+    def unsubscribe(self, client: queue.Queue[bytes]) -> None:
+        with self._lock:
+            self._clients.discard(client)
+
+    def publish(self, chunk: bytes) -> None:
+        with self._lock:
+            clients = tuple(self._clients)
+        for client in clients:
+            try:
+                client.put_nowait(chunk)
+            except queue.Full:
+                try:
+                    client.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    client.put_nowait(chunk)
+                except queue.Full:
+                    pass
+
+
+class CloudRelay:
+    """Maintain one reconnecting cloud session and publish video outputs."""
+
+    def __init__(
+        self,
+        username: str,
+        password: str,
+        api_host: str,
+        serial: str,
+        channel: int,
+        stream_type: int,
+        fps: float,
+        jpeg_quality: int,
+        on_auth_failed=None,
+    ) -> None:
+        self.username = username
+        self.password = password
+        self.api_host = api_host
+        self.serial = serial
+        self.channel = channel
+        self.stream_type = stream_type
+        self.fps = fps
+        self.jpeg_quality = jpeg_quality
+        self.output_mode = "legacy"
+        self._legacy_outputs_enabled = True
+        self._on_auth_failed = on_auth_failed
+        self.frames = FrameBuffer()
+        self.mpegts = ChunkBuffer()
+        self.stop_event = threading.Event()
+        self._state_lock = threading.Lock()
+        self._status = "starting"
+        self._error: str | None = None
+        self._reconnect_attempt = 0
+        self._next_retry_at = 0.0
+        self._metrics_lock = threading.Lock()
+        self._rtp_packets = 0
+        self._nals = 0
+        self._picture_timestamps = 0
+        self._last_rtp_timestamp: int | None = None
+        self._jpeg_frames = 0
+        self._jpeg_bytes = 0
+        self._mpegts_chunks = 0
+        self._mpegts_bytes = 0
+        self._started_at = time.monotonic()
+        self._last_rtp_at = self._started_at
+        self._last_disconnect_reason: str | None = None
+        self._last_reconnect_duration: float | None = None
+        self._last_session_duration: float | None = None
+        self._last_reconnect_phases: dict[str, float] = {}
+        self._recovery_started_at: float | None = None
+        self._active_lock = threading.Lock()
+        self._active_stream = None
+        self._thread = threading.Thread(target=self._run, name="hikvision-vtm", daemon=True)
+
+    @property
+    def status(self) -> str:
+        with self._state_lock:
+            return self._status
+
+    def _set_state(self, status: str, error: str | None = None) -> None:
+        with self._state_lock:
+            self._status = status
+            self._error = error
+
+    def _set_disconnect_reason(self, reason: str) -> None:
+        with self._state_lock:
+            self._last_disconnect_reason = reason
+
+    def _get_disconnect_reason(self) -> str | None:
+        with self._state_lock:
+            return self._last_disconnect_reason
+
+    def _record_phase(self, name: str, started_at: float) -> None:
+        with self._metrics_lock:
+            self._last_reconnect_phases[name] = round(time.monotonic() - started_at, 1)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        with self._active_lock:
+            stream = self._active_stream
+        if stream is not None:
+            stream.close()
+        self._thread.join(timeout=12)
+        self._set_state("stopped")
+
+    def snapshot(self, timeout: float = 15.0) -> bytes:
+        return self.frames.snapshot(timeout)
+
+    def subscribe(self) -> queue.Queue[bytes]:
+        return self.frames.subscribe()
+
+    def unsubscribe(self, client: queue.Queue[bytes]) -> None:
+        self.frames.unsubscribe(client)
+
+    def subscribe_mpegts(self) -> queue.Queue[bytes]:
+        return self.mpegts.subscribe()
+
+    def unsubscribe_mpegts(self, client: queue.Queue[bytes]) -> None:
+        self.mpegts.unsubscribe(client)
+
+    @property
+    def legacy_outputs_enabled(self) -> bool:
+        return self._legacy_outputs_enabled
+
+    @property
+    def healthy(self) -> bool:
+        """Return whether the configured output path is ready for consumers."""
+
+        if self.status != "streaming":
+            return False
+        return self.frames.fresh
+
+    def note_rtp(self) -> None:
+        with self._metrics_lock:
+            self._rtp_packets += 1
+            self._last_rtp_at = time.monotonic()
+
+    def note_nals(self, count: int) -> None:
+        with self._metrics_lock:
+            self._nals += count
+
+    def note_picture_timestamp(self, timestamp: int | None) -> None:
+        if timestamp is None:
+            return
+        with self._metrics_lock:
+            if timestamp != self._last_rtp_timestamp:
+                self._picture_timestamps += 1
+                self._last_rtp_timestamp = timestamp
+
+    def note_jpeg(self, size: int) -> None:
+        with self._metrics_lock:
+            self._jpeg_frames += 1
+            self._jpeg_bytes += size
+
+    def stats(self) -> dict[str, object]:
+        with self._state_lock:
+            status, error = self._status, self._error
+            disconnect_reason = self._last_disconnect_reason
+        with self._metrics_lock:
+            values = {
+                "rtp_packets": self._rtp_packets,
+                "rtp_idle_seconds": round(time.monotonic() - self._last_rtp_at, 1),
+                "nals": self._nals,
+                "picture_timestamps": self._picture_timestamps,
+                "jpeg_frames": self._jpeg_frames,
+                "jpeg_bytes": self._jpeg_bytes,
+                "mpegts_chunks": self._mpegts_chunks,
+                "mpegts_bytes": self._mpegts_bytes,
+                "last_reconnect_duration_seconds": self._last_reconnect_duration,
+                "last_session_duration_seconds": self._last_session_duration,
+                "last_reconnect_phases": dict(self._last_reconnect_phases),
+            }
+        values.update(
+            {
+                "status": status,
+                "healthy": self.healthy,
+                "error": error,
+                "last_disconnect_reason": disconnect_reason,
+                "serial": self.serial,
+                "channel": self.channel,
+                "stream_type": self.stream_type,
+                "fps_target": self.fps,
+                "jpeg_quality": self.jpeg_quality,
+                "output_mode": self.output_mode,
+                "legacy_outputs_enabled": self._legacy_outputs_enabled,
+                "uptime_seconds": round(time.monotonic() - self._started_at, 1),
+                "reconnect_attempt": self._reconnect_attempt,
+                "retry_in_seconds": round(max(0.0, self._next_retry_at - time.monotonic()), 1),
+            }
+        )
+        return values
+
+    def _run(self) -> None:
+        retry_delay = 2.0
+        while not self.stop_event.is_set():
+            attempt = self._reconnect_attempt + 1
+            attempt_started = time.monotonic()
+            self._set_disconnect_reason("starting")
+            with self._metrics_lock:
+                self._last_reconnect_phases = {}
+            _LOGGER.info("Hikvision relay reconnect attempt %s starting", attempt)
+            try:
+                self._run_once()
+            except HikConnectAuthError:
+                # Terminal until the user explicitly completes HA reauthentication.
+                self._set_state("auth_failed", "Cloud sign-in required")
+                self.stop_event.set()
+                if self._on_auth_failed is not None:
+                    self._on_auth_failed()
+                return
+            except UnsupportedVtmStream:
+                self._set_state("unsupported", "This cloud stream format is not supported")
+                self.stop_event.set()
+                return
+            except Exception as exc:  # noqa: BLE001
+                if self.stop_event.is_set():
+                    break
+                session_elapsed = time.monotonic() - attempt_started
+                reason = self._get_disconnect_reason() or type(exc).__name__
+                self._set_state("error", "Cloud media connection failed")
+                with self._metrics_lock:
+                    self._last_session_duration = round(session_elapsed, 1)
+                    if self._recovery_started_at is None:
+                        self._recovery_started_at = time.monotonic()
+                    phases = dict(self._last_reconnect_phases)
+                self._reconnect_attempt += 1
+                phase_summary = ", ".join(
+                    f"{name}={duration:.1f}s" for name, duration in phases.items()
+                ) or "none"
+                # A long, media-producing session is a success, even if it
+                # eventually exits via an exception rather than returning.
+                if "first_rtp" in phases and session_elapsed - phases["first_rtp"] >= 60.0:
+                    retry_delay = 2.0
+                delay = _retry_delay_for_reason(reason, retry_delay)
+                if delay > 0:
+                    retry_delay = min(retry_delay * 2, 120.0)
+                _LOGGER.warning(
+                    "Hikvision cloud relay session ended after %.1fs phase=%s: %s; "
+                    "phases=[%s]; retrying in %.1fs (attempt #%s)",
+                    session_elapsed,
+                    reason,
+                    self._error,
+                    phase_summary,
+                    delay,
+                    self._reconnect_attempt + 1,
+                )
+            else:
+                session_elapsed = time.monotonic() - attempt_started
+                with self._metrics_lock:
+                    self._last_session_duration = round(session_elapsed, 1)
+                self._reconnect_attempt = 0
+                delay = 2.0
+                retry_delay = 2.0
+                _LOGGER.info("Hikvision relay attempt completed after %.1fs", session_elapsed)
+            self._next_retry_at = time.monotonic() + delay
+            if self.stop_event.wait(delay):
+                break
+            self._next_retry_at = 0.0
+            self._set_state("reconnecting")
+
+    def _watch_media_idle(
+        self, stream, stop_event: threading.Event, received_rtp: threading.Event
+    ) -> None:
+        """Recover stalled media quickly while allowing a longer cold start."""
+
+        while not stop_event.wait(1.0):
+            with self._metrics_lock:
+                idle_seconds = time.monotonic() - self._last_rtp_at
+            had_media = received_rtp.is_set()
+            idle_limit = _MEDIA_IDLE_TIMEOUT if had_media else _INITIAL_MEDIA_TIMEOUT
+            if idle_seconds >= idle_limit:
+                self._set_disconnect_reason("media_idle" if had_media else "waiting_for_rtp")
+                with self._metrics_lock:
+                    if self._recovery_started_at is None:
+                        self._recovery_started_at = time.monotonic()
+                _LOGGER.warning(
+                    "Hikvision VTM media idle for %.1fs; reconnecting", idle_seconds
+                )
+                stream.close()
+                return
+
+    def _run_once(self) -> None:
+        self.frames.clear()
+        attempt_started = time.monotonic()
+        client = HikConnectClient(self.username, self.password, self.api_host)
+        stream = None
+        media_watchdog_stop: threading.Event | None = None
+        media_watchdog_thread: threading.Thread | None = None
+        process: subprocess.Popen[bytes] | None = None
+        output_thread: threading.Thread | None = None
+        mpegts_output: BinaryIO | None = None
+        mpegts_thread: threading.Thread | None = None
+        try:
+            self._set_disconnect_reason("login")
+            phase_started = time.monotonic()
+            _LOGGER.info("Hikvision cloud login starting")
+            client.login()
+            self._record_phase("login", phase_started)
+            _LOGGER.info(
+                "Hikvision cloud login completed in %.1fs",
+                time.monotonic() - phase_started,
+            )
+            self._set_disconnect_reason("vtm_endpoint")
+            phase_started = time.monotonic()
+            stream = client.open_vtm_stream(
+                self.serial, self.channel, self.stream_type, timeout=10.0
+            )
+            self._record_phase("vtm_endpoint", phase_started)
+            _LOGGER.info(
+                "Hikvision VTM endpoint prepared in %.1fs",
+                time.monotonic() - phase_started,
+            )
+            with self._active_lock:
+                self._active_stream = stream
+            self._set_disconnect_reason("vtm_negotiation")
+            phase_started = time.monotonic()
+            info = stream.start()
+            self._record_phase("vtm_negotiation", phase_started)
+            _LOGGER.info(
+                "Hikvision VTM stream negotiated in %.1fs result=%s",
+                time.monotonic() - phase_started,
+                info.result,
+            )
+            _LOGGER.debug(
+                "Hikvision VTM stream up serial=%s channel=%s result=%s",
+                self.serial, self.channel, info.result
+            )
+            if self._legacy_outputs_enabled:
+                process, mpegts_output = self._start_ffmpeg()
+                output_thread = threading.Thread(
+                    target=self._publish_jpegs,
+                    args=(process.stdout,),
+                    name="hikvision-vtm-jpeg",
+                    daemon=True,
+                )
+                output_thread.start()
+                mpegts_thread = threading.Thread(
+                    target=self._publish_mpegts,
+                    args=(mpegts_output,),
+                    name="hikvision-vtm-mpegts",
+                    daemon=True,
+                )
+                mpegts_thread.start()
+            with self._metrics_lock:
+                self._last_rtp_at = time.monotonic()
+            media_watchdog_stop = threading.Event()
+            received_rtp = threading.Event()
+            media_watchdog_thread = threading.Thread(
+                target=self._watch_media_idle,
+                args=(stream, media_watchdog_stop, received_rtp),
+                name="hikvision-vtm-media-watchdog",
+                daemon=True,
+            )
+            media_watchdog_thread.start()
+            decoder = H264Depacketizer()
+            parameter_sets = H264ParameterSetInjector()
+            self._set_disconnect_reason("waiting_for_rtp")
+            self._set_state("streaming")
+            with self._metrics_lock:
+                self._last_rtp_timestamp = None
+            first_rtp = True
+            stdin = process.stdin if process is not None else None
+            if process is not None and stdin is None:
+                raise RuntimeError("FFmpeg stdin is unavailable")
+            for packet in stream.iter_packets():
+                if self.stop_event.is_set():
+                    break
+                self.note_rtp()
+                if first_rtp:
+                    first_rtp = False
+                    received_rtp.set()
+                    self._set_disconnect_reason("streaming")
+                    self._record_phase("first_rtp", attempt_started)
+                    with self._metrics_lock:
+                        recovery_started_at = self._recovery_started_at
+                        if recovery_started_at is not None:
+                            self._last_reconnect_duration = round(
+                                time.monotonic() - recovery_started_at, 1
+                            )
+                            self._recovery_started_at = None
+                        else:
+                            recovery_duration = None
+                    if recovery_started_at is not None:
+                        recovery_duration = self._last_reconnect_duration
+                        _LOGGER.warning(
+                            "Hikvision media recovery received first RTP in %.1fs",
+                            recovery_duration,
+                        )
+                    _LOGGER.info(
+                        "Hikvision first RTP packet received %.1fs after reconnect start",
+                        time.monotonic() - attempt_started,
+                    )
+                payload = rtp_payload(packet.body)
+                if not payload:
+                    continue
+                self.note_picture_timestamp(rtp_timestamp(packet.body))
+                nals = list(decoder.feed(payload))
+                self.note_nals(len(nals))
+                if stdin is not None:
+                    for nal in parameter_sets.feed(nals):
+                        stdin.write(b"\x00\x00\x00\x01" + nal)
+                    if nals:
+                        stdin.flush()
+        finally:
+            if media_watchdog_stop is not None:
+                media_watchdog_stop.set()
+            if media_watchdog_thread is not None:
+                media_watchdog_thread.join(timeout=1)
+            with self._active_lock:
+                if self._active_stream is stream:
+                    self._active_stream = None
+            if stream is not None:
+                stream.close()
+            if process is not None:
+                if process.stdin is not None:
+                    try:
+                        process.stdin.close()
+                    except OSError:
+                        pass
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            if mpegts_output is not None:
+                try:
+                    mpegts_output.close()
+                except OSError:
+                    pass
+            if mpegts_thread is not None:
+                mpegts_thread.join(timeout=2)
+            if output_thread is not None:
+                output_thread.join(timeout=2)
+            client.close()
+
+    def _start_ffmpeg(self) -> tuple[subprocess.Popen[bytes], BinaryIO]:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("FFmpeg executable was not found")
+        mpegts_read, mpegts_write = os.pipe()
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-fflags",
+            "+genpts",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-an",
+        ]
+        if self.fps > 0:
+            command.extend(("-vf", f"fps={self.fps:g}"))
+        command.extend(
+            (
+                "-q:v",
+                str(self.jpeg_quality),
+                "-f",
+                "mjpeg",
+                "pipe:1",
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-crf",
+                "18",
+                "-g",
+                "50",
+                "-pix_fmt",
+                "yuv420p",
+                "-x264-params",
+                "repeat-headers=1",
+                "-force_key_frames",
+                "expr:gte(t,n_forced*2)",
+                "-f",
+                "mpegts",
+                "-mpegts_flags",
+                "+resend_headers+pat_pmt_at_frames",
+                "-muxdelay",
+                "0.1",
+                f"pipe:{mpegts_write}",
+            )
+        )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                pass_fds=(mpegts_write,),
+            )
+        except BaseException:
+            os.close(mpegts_read)
+            os.close(mpegts_write)
+            raise
+        os.close(mpegts_write)
+        return process, os.fdopen(mpegts_read, "rb")
+
+    def _publish_jpegs(self, output: BinaryIO | None) -> None:
+        if output is None:
+            return
+        buffer = bytearray()
+        while not self.stop_event.is_set():
+            chunk = output.read(65536)
+            if not chunk:
+                return
+            buffer.extend(chunk)
+            while True:
+                start = buffer.find(b"\xff\xd8")
+                if start < 0:
+                    if len(buffer) > 1:
+                        del buffer[:-1]
+                    break
+                end = buffer.find(b"\xff\xd9", start + 2)
+                if end < 0:
+                    if start:
+                        del buffer[:start]
+                    break
+                frame = bytes(buffer[start : end + 2])
+                del buffer[: end + 2]
+                self.note_jpeg(len(frame))
+                self.frames.publish(frame)
+
+    def _publish_mpegts(self, output: BinaryIO | None) -> None:
+        if output is None:
+            return
+        while not self.stop_event.is_set():
+            chunk = output.read(188 * 32)
+            if not chunk:
+                return
+            with self._metrics_lock:
+                self._mpegts_chunks += 1
+                self._mpegts_bytes += len(chunk)
+            self.mpegts.publish(chunk)
