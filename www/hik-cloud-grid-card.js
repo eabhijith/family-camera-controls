@@ -1,5 +1,6 @@
 export const CLOUD_DOMAIN = "hikconnect_cloud_relay";
-export const SETUP_URL = "https://my.home-assistant.io/redirect/config_flow_start/?domain=hikconnect_cloud_relay";
+// Stay on this HA instance; My Home Assistant may remember another host/port.
+export const SETUP_URL = "/_my_redirect/config_flow_start?domain=hikconnect_cloud_relay";
 
 export function cloudCameraIds(states = {}) {
   return Object.keys(states).filter((id) => /^camera\.[a-z0-9_]+$/.test(id)
